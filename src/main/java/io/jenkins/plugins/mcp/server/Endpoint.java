@@ -35,9 +35,11 @@ import hudson.model.User;
 import hudson.security.csrf.CrumbExclusion;
 import hudson.util.PluginServletFilter;
 import io.jenkins.plugins.mcp.server.annotation.Tool;
-import io.jenkins.plugins.mcp.server.servlet.UserContextHttpRequest;
 import io.jenkins.plugins.mcp.server.tool.McpToolWrapper;
+import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpTransportContextExtractor;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
 import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -52,6 +54,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import jenkins.model.Jenkins;
 import jenkins.util.SystemProperties;
@@ -190,10 +193,11 @@ public class Endpoint extends CrumbExclusion implements RootAction {
             rootUrl = "";
         }
         httpServletSseServerTransportProvider = HttpServletSseServerTransportProvider.builder()
+                .jsonMapper(new JacksonMcpJsonMapper(objectMapper))
                 .sseEndpoint(SSE_ENDPOINT)
                 .baseUrl(rootUrl)
                 .messageEndpoint(MCP_SERVER_MESSAGE)
-                .objectMapper(objectMapper)
+                .contextExtractor(createExtractor())
                 .keepAliveInterval(keepAliveInterval > 0 ? Duration.ofSeconds(keepAliveInterval) : null)
                 .build();
 
@@ -205,15 +209,9 @@ public class Endpoint extends CrumbExclusion implements RootAction {
                 .build();
 
         httpServletStreamableServerTransportProvider = HttpServletStreamableServerTransportProvider.builder()
-                .objectMapper(objectMapper)
+                .jsonMapper(new JacksonMcpJsonMapper(objectMapper))
                 .mcpEndpoint(STREAMABLE_ENDPOINT)
-                .contextExtractor((serverRequest, context) -> {
-                    var userId = serverRequest.getAttribute(USER_ID);
-                    if (userId != null) {
-                        context.put(USER_ID, userId);
-                    }
-                    return context;
-                })
+                .contextExtractor(createExtractor())
                 .keepAliveInterval(keepAliveInterval > 0 ? Duration.ofSeconds(keepAliveInterval) : null)
                 .build();
 
@@ -236,6 +234,17 @@ public class Endpoint extends CrumbExclusion implements RootAction {
                 filterChain.doFilter(servletRequest, servletResponse);
             }
         });
+    }
+
+    private static McpTransportContextExtractor<HttpServletRequest> createExtractor() {
+        return (serverRequest) -> {
+            var userId = serverRequest.getAttribute(USER_ID);
+            var contextMap = new HashMap<String, Object>();
+            if (userId != null) {
+                contextMap.put(USER_ID, userId);
+            }
+            return McpTransportContext.create(contextMap);
+        };
     }
 
     private boolean validateOriginHeader(ServletRequest request, ServletResponse response) {
@@ -380,11 +389,17 @@ public class Endpoint extends CrumbExclusion implements RootAction {
 
     protected void handleMessage(HttpServletRequest request, HttpServletResponse response)
             throws IOException, ServletException {
-        httpServletSseServerTransportProvider.service(new UserContextHttpRequest(objectMapper, request), response);
+        copyContext(request);
+        httpServletSseServerTransportProvider.service(request, response);
     }
 
     private void handleMcpRequest(ServletRequest request, ServletResponse response)
             throws IOException, ServletException {
+        copyContext(request);
+        httpServletStreamableServerTransportProvider.service(request, response);
+    }
+
+    private static void copyContext(ServletRequest request) {
         var currentUser = User.current();
         String userId = null;
         if (currentUser != null) {
@@ -393,6 +408,5 @@ public class Endpoint extends CrumbExclusion implements RootAction {
         if (userId != null) {
             request.setAttribute(USER_ID, userId);
         }
-        httpServletStreamableServerTransportProvider.service(request, response);
     }
 }
