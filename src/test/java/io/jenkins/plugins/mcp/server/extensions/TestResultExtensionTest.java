@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.jvnet.hudson.test.JenkinsRule;
@@ -173,13 +174,16 @@ public class TestResultExtensionTest {
                 Object testResultAction = result.get("TestResultAction");
                 assertThat(testResultAction).isNotNull();
 
-                Object testResultRaw = result.get("failingTests");
-                assertThat(testResultRaw).isNotNull();
-                Configuration conf = Configuration.defaultConfiguration();
+                List testResultRaw = (List) result.get("TestResult");
 
-                List<Object> list = documentContext.read("$..failingTests..className");
+                assertThat(testResultRaw).isNotNull();
+                List<Object> list = documentContext.read("$..TestResult..className");
+
                 assertThat(list).size().isEqualTo(testResult.getFailedTests().size());
-                assertThat(list).size().isEqualTo(3); // There are 3 failing tests in the two reports
+                assertThat(list).size().isEqualTo(3);
+                assertThat(((Map) testResultRaw.get(0)).get("cases"))
+                        .asInstanceOf(InstanceOfAssertFactories.LIST)
+                        .hasSize(3); // There are 3 failing tests in the two reports
             }
         }
     }
